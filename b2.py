@@ -616,17 +616,18 @@ async def help_command(interaction: discord.Interaction):
 bot.run(TOKEN)
 
 
-@app_commands.command(name="delvps", description="Delete all VPS containers for a user (Admin only)")
-@app_commands.checks.has_permissions(administrator=True)  # Ensures the user has admin permissions
-async def delvps(interaction: discord.Interaction, user_id: str):
-    # List of authorized User IDs (replace with actual IDs)
-    authorized_user_ids = ["1119657947434332211", "1085944828883369984"]  # User IDs you provided
-    
-    # Check if the user executing the command is authorized
-    if str(interaction.user.id) not in authorized_user_ids:
-        await interaction.response.send_message("You do not have permission to use this command.", ephemeral=True)
-        return
+whitelist_ids = {"1128161197766746213", "YOUR_USER_ID"}  # Add your user ID here
 
+def is_whitelisted():
+    async def predicate(interaction: discord.Interaction):
+        return str(interaction.user.id) in whitelist_ids
+    return app_commands.check(predicate)
+
+
+# Delete all VPS containers for a user (Admin only)
+@app_commands.command(name="delvps", description="Delete all VPS containers for a user (Admin only)")
+@is_whitelisted()
+async def delvps(interaction: discord.Interaction, user_id: str):
     await interaction.response.defer(thinking=True)
     docker_client = docker.from_env()
     deleted_containers = []
@@ -641,26 +642,26 @@ async def delvps(interaction: discord.Interaction, user_id: str):
     else:
         await interaction.followup.send("No containers found for the specified user.")
 
-@app_commands.command(name="node_admin", description="Show all user IDs, their containers, and usage (Admin only)")
-@app_commands.checks.has_permissions(administrator=True)  # Ensures the user has admin permissions
-async def node_admin(interaction: discord.Interaction):
-    # List of authorized User IDs (replace with actual IDs)
-    authorized_user_ids = ["1119657947434332211", "1085944828883369984"]  # User IDs you provided
-    
-    # Check if the user executing the command is authorized
-    if str(interaction.user.id) not in authorized_user_ids:
-        await interaction.response.send_message("You do not have permission to use this command.", ephemeral=True)
-        return
 
+# Show all user IDs, their containers, and usage (Admin only)
+@app_commands.command(name="node_admin", description="Show all user IDs, their containers, and usage (Admin only)")
+@is_whitelisted()
+async def node_admin(interaction: discord.Interaction):
     await interaction.response.defer(thinking=True)
     docker_client = docker.from_env()
     container_data = []
 
     for container in docker_client.containers.list(all=True):
-        stats = container.stats(stream=False)
-        cpu_usage = stats["cpu_stats"]["cpu_usage"]["total_usage"] / 1e9
-        memory_usage = stats["memory_stats"]["usage"] / 1e6
-        container_data.append(f"User: {container.name.split('_')[0]} | ID: {container.id[:12]} | CPU: {cpu_usage:.2f}% | RAM: {memory_usage:.2f}MB")
+        try:
+            stats = container.stats(stream=False)
+            cpu_usage = stats["cpu_stats"]["cpu_usage"]["total_usage"] / 1e9
+            memory_usage = stats["memory_stats"]["usage"] / 1e6
+            container_data.append(
+                f"User: {container.name.split('_')[0]} | ID: {container.id[:12]} | "
+                f"CPU: {cpu_usage:.2f}% | RAM: {memory_usage:.2f}MB"
+            )
+        except Exception as e:
+            container_data.append(f"Error fetching stats for {container.name}: {str(e)}")
 
     if container_data:
         await interaction.followup.send("```\n" + "\n".join(container_data) + "\n```")
