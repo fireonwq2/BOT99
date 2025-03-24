@@ -446,26 +446,47 @@ def get_container_id_from_database(userid, container_name):
 def generate_random_port():
     return random.randint(1025, 65535)
 
-async def create_server_task(interaction):
+async def create_server_task(interaction, ram_limit: str, cpu_limit: str, password: str, os_version: str):
     await interaction.response.send_message(embed=discord.Embed(description="### Initializing your new VPS instance. Please wait... Powered by [NXH-i9](https://discord.gg/8yPcnBXBBR)", color=0x00ff00))
     userid = str(interaction.user.id)
+    
+    # Check if the user has exceeded the instance limit
     if count_user_servers(userid) >= SERVER_LIMIT:
         await interaction.followup.send(embed=discord.Embed(description="```Error: Instance Limit-reached```", color=0xff0000))
         return
-
-    image = "ubuntu-22.04-with-tmate"
+    
+    # Select the appropriate image
+    image = IMAGES.get(os_version)
+    if not image:
+        await interaction.followup.send(embed=discord.Embed(description=f"```Error: Unsupported OS/Version {os_version}.```", color=0xff0000))
+        return
 
     try:
+        # Run Docker container with RAM, CPU, and image specifications
         container_id = subprocess.check_output([
-           "docker", "run", "-itd", "--privileged", "--hostname", "nxh-i9", "--cap-add=ALL", image
+           "docker", "run", "-itd", 
+           "--privileged",
+           "--hostname", "nxh-i9",
+           "--cap-add=ALL",
+           "--memory", ram_limit,  # Set RAM limit
+           "--cpus", cpu_limit,     # Set CPU limit
+           image
         ]).strip().decode('utf-8')
+
+        # Set the root password inside the container
+        await asyncio.create_subprocess_exec(
+            "docker", "exec", container_id, "bash", "-c", f"echo 'root:{password}' | chpasswd"
+        )
+
     except subprocess.CalledProcessError as e:
         await interaction.followup.send(embed=discord.Embed(description=f"### Error creating Docker container: {e}", color=0xff0000))
         return
 
     try:
-        exec_cmd = await asyncio.create_subprocess_exec("docker", "exec", container_id, "tmate", "-F",
-                                                        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+        exec_cmd = await asyncio.create_subprocess_exec(
+            "docker", "exec", container_id, "tmate", "-F",
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+        )
     except subprocess.CalledProcessError as e:
         await interaction.followup.send(embed=discord.Embed(description=f"### Error executing tmate in Docker container: {e}", color=0xff0000))
         subprocess.run(["docker", "kill", container_id])
@@ -474,17 +495,23 @@ async def create_server_task(interaction):
 
     ssh_session_line = await capture_ssh_session_line(exec_cmd)
     if ssh_session_line:
-        await interaction.user.send(embed=discord.Embed(description=f"### Successfully created Instance\nSSH Session Command: ```{ssh_session_line}```\nOS: Ubuntu 22.04\nPassword: root", color=0x00ff00))
+        await interaction.user.send(embed=discord.Embed(description=f"### Successfully created Instance\nSSH Session Command: ```{ssh_session_line}```\nOS: {os_version}\nPassword: {password}", color=0x00ff00))
         add_to_database(userid, container_id, ssh_session_line)
         await interaction.followup.send(embed=discord.Embed(description="### Instance created successfully. Check your DMs for details.", color=0x00ff00))
     else:
         await interaction.followup.send(embed=discord.Embed(description="### Something went wrong or the Instance is taking longer than expected. If this problem continues, Contact Support.", color=0xff0000))
         subprocess.run(["docker", "kill", container_id])
         subprocess.run(["docker", "rm", container_id])
-
-@bot.tree.command(name="deploy", description="Creates a new Instance with Ubuntu 22.04")
-async def deploy_ubuntu(interaction: discord.Interaction):
-    await create_server_task(interaction)
+        
+@bot.tree.command(name="deploy", description="Creates a new Instance with custom RAM, CPU, Password, and OS/Version")
+@app_commands.describe(
+    ram_limit="Amount of RAM to allocate (e.g., 10g, 4g, 2g)", 
+    cpu_limit="Number of CPU cores to allocate (e.g., 1, 2, 4)", 
+    password="Set a root password for SSH access",
+    os_version="OS Version (e.g., ubuntu-22.04, debian-12, ubuntu-20.04)"
+)
+async def deploy_vps(interaction: discord.Interaction, ram_limit: str, cpu_limit: str, password: str, os_version: str):
+    await create_server_task(interaction, ram_limit, cpu_limit, password, os_version)
 
 #@bot.tree.command(name="deploy-debian", description="Creates a new Instance with Debian 12")
 #async def deploy_ubuntu(interaction: discord.Interaction):
