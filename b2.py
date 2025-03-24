@@ -616,7 +616,7 @@ async def help_command(interaction: discord.Interaction):
 bot.run(TOKEN)
 
 
-whitelist_ids = {"1128161197766746213", "YOUR_USER_ID"}  # Add your user ID here
+whitelist_ids = {"1085944828883369984", "1119657947434332211"}  # Add your user ID here
 
 def is_whitelisted():
     async def predicate(interaction: discord.Interaction):
