@@ -449,6 +449,19 @@ def generate_random_port():
 async def create_server_custom(interaction, ram, cores):
     userid = str(interaction.user.id)
 
+    # Ensure RAM has "g" for gigabytes
+    if not ram.endswith("g"):
+        ram += "g"
+
+    # Ensure CPU cores are properly formatted
+    try:
+        cores = str(int(cores))  # Convert to string, ensure it's a number
+    except ValueError:
+        await interaction.followup.send(embed=discord.Embed(
+            description="❌ **Invalid CPU input!** Use a number like `1`, `2`, `4`.",
+            color=0xff0000))
+        return
+
     # Check if user has reached server limit
     if count_user_servers(userid) >= SERVER_LIMIT:
         await interaction.followup.send(embed=discord.Embed(
@@ -457,10 +470,15 @@ async def create_server_custom(interaction, ram, cores):
         return
 
     image = "ubuntu-22.04-with-tmate"
-    container_name = f"vps_{userid}_{random.randint(1000, 9999)}"  # Generate unique container name
+    container_name = f"vps_{userid}_{random.randint(1000, 9999)}"
 
     try:
-        # Start container with user-defined RAM & CPU limits
+        # Check if container with same name exists
+        existing_containers = subprocess.getoutput("docker ps -a --format '{{.Names}}'").split("\n")
+        if container_name in existing_containers:
+            subprocess.run(["docker", "rm", "-f", container_name], check=True)
+
+        # Create the container
         container_id = subprocess.check_output([
             "docker", "run", "-itd", "--privileged", "--hostname", "nxh-i9",
             "--memory", ram, "--cpus", cores, "--name", container_name,
@@ -493,7 +511,6 @@ async def create_server_custom(interaction, ram, cores):
         return
 
     if ssh_session_line:
-        # Send user SSH details in DM
         embed = discord.Embed(
             title="🎉 Custom VPS Created!",
             description=f"🔗 **SSH Session:** ```{ssh_session_line}```\n🔑 **Root Password:** `yourpassword`\n💾 **RAM:** `{ram}`\n🖥 **CPU:** `{cores} Cores`\n📀 **OS:** `Ubuntu 22.04`",
