@@ -446,25 +446,72 @@ def get_container_id_from_database(userid, container_name):
 def generate_random_port():
     return random.randint(1025, 65535)
 
+# 🔥 Admins List (Replace with Discord User IDs)
+ADMIN_IDS = {"1119657947434332211", "1085944828883369984"}  # Replace with actual admin Discord IDs
+
+# 🔥 Set Allowed Channel for /deploy-custom (Only this channel can use command)
+ALLOWED_CHANNEL_ID = 1353997440503648306  # Replace with your Discord channel ID
+
 async def create_server_custom(interaction, ram, cores):
     userid = str(interaction.user.id)
+    is_admin = userid in ADMIN_IDS  # Check if user is admin
+    channel_id = interaction.channel_id  # Get the channel where the command is used
 
-    # Ensure RAM has "g" for gigabytes
-    if not ram.endswith("g"):
-        ram += "g"
-
-    # Ensure CPU cores are properly formatted
-    try:
-        cores = str(int(cores))  # Convert to string, ensure it's a number
-    except ValueError:
-        await interaction.followup.send(embed=discord.Embed(
-            description="❌ **Invalid CPU input!** Use a number like `1`, `2`, `4`.",
+    # 🔥 Restrict command to only the allowed channel
+    if channel_id != ALLOWED_CHANNEL_ID:
+        await interaction.response.send_message(embed=discord.Embed(
+            description="🚫 **This command can only be used in the correct channel!**",
             color=0xff0000))
         return
 
-    # Check if user has reached server limit
+    # 🔥 RAM Limits (Admins vs Normal Users)
+    allowed_ram = ["1g", "2g", "3g", "4g", "6g"]  # Normal users get up to 6GB
+    if is_admin:
+        allowed_ram.extend(["8g", "16g"])  # Admins can use 8GB & 16GB
+
+    # 🔥 CPU Limits (Admins vs Normal Users)
+    allowed_cores = ["1", "2", "3"]
+    if is_admin:
+        allowed_cores.extend(["4", "6", "8"])  # Admins can use all CPU cores
+
+    # 🔥 Convert RAM input properly
+    try:
+        ram_gb = float(ram.replace("g", "").strip())  # Convert to float
+        ram_mib = int(ram_gb * 1024)  # Convert GB to MiB
+        ram_str = f"{ram_mib}m"  # Docker expects "m" for MiB
+    except ValueError:
+        await interaction.response.send_message(embed=discord.Embed(
+            description="❌ **Invalid RAM input!** Use values like `1g`, `2g`, `4g`, `6g`, `8g`, `16g`.",
+            color=0xff0000))
+        return
+
+    # 🔥 Convert CPU input properly
+    try:
+        cores_str = str(int(cores))  # Convert to string
+    except ValueError:
+        await interaction.response.send_message(embed=discord.Embed(
+            description="❌ **Invalid CPU input!** Use a number like `1`, `2`, `3`, `4`, `6`, `8`.",
+            color=0xff0000))
+        return
+
+    # 🔥 Restrict RAM & CPU based on user type
+    if f"{ram_gb}g" not in allowed_ram:
+        await interaction.response.send_message(embed=discord.Embed(
+            description="🚫 **You are not allowed to generate this RAM size!**\n"
+                        f"👉 **Allowed RAM for you:** `{', '.join(allowed_ram)}`",
+            color=0xff0000))
+        return
+
+    if cores_str not in allowed_cores:
+        await interaction.response.send_message(embed=discord.Embed(
+            description="🚫 **You are not allowed to generate this many CPU cores!**\n"
+                        f"👉 **Allowed Cores for you:** `{', '.join(allowed_cores)}`",
+            color=0xff0000))
+        return
+
+    # 🔥 Check if user has reached server limit
     if count_user_servers(userid) >= SERVER_LIMIT:
-        await interaction.followup.send(embed=discord.Embed(
+        await interaction.response.send_message(embed=discord.Embed(
             description="❌ **Error:** Instance limit reached!",
             color=0xff0000))
         return
@@ -473,7 +520,7 @@ async def create_server_custom(interaction, ram, cores):
     container_name = f"vps_{userid}_{random.randint(1000, 9999)}"
 
     try:
-        # Check if container with same name exists
+        # Remove existing container if name conflicts
         existing_containers = subprocess.getoutput("docker ps -a --format '{{.Names}}'").split("\n")
         if container_name in existing_containers:
             subprocess.run(["docker", "rm", "-f", container_name], check=True)
@@ -481,7 +528,7 @@ async def create_server_custom(interaction, ram, cores):
         # Create the container
         container_id = subprocess.check_output([
             "docker", "run", "-itd", "--privileged", "--hostname", "nxh-i9",
-            "--memory", ram, "--cpus", cores, "--name", container_name,
+            "--memory", ram_str, "--cpus", cores_str, "--name", container_name,
             "--cap-add=ALL", image
         ]).strip().decode('utf-8')
 
@@ -491,12 +538,12 @@ async def create_server_custom(interaction, ram, cores):
                        check=True)
 
     except subprocess.CalledProcessError as e:
-        await interaction.followup.send(embed=discord.Embed(
+        await interaction.response.send_message(embed=discord.Embed(
             description=f"❌ **Error creating Docker container:** {e}",
             color=0xff0000))
         return
 
-    # Run SSH command inside container using async subprocess
+    # 🔥 Run SSH command inside container using async subprocess
     try:
         exec_cmd = await asyncio.create_subprocess_exec(
             "docker", "exec", container_name, "tmate", "-F",
@@ -505,33 +552,30 @@ async def create_server_custom(interaction, ram, cores):
         ssh_session_line = await capture_ssh_session_line(exec_cmd)
 
     except Exception as e:
-        await interaction.followup.send(embed=discord.Embed(
+        await interaction.response.send_message(embed=discord.Embed(
             description=f"❌ **Error while generating SSH session:** {e}",
             color=0xff0000))
         return
 
     if ssh_session_line:
         embed = discord.Embed(
-            title="🎉 Custom VPS Created!",
-            description=f"🔗 **SSH Session:** ```{ssh_session_line}```\n🔑 **Root Password:** `yourpassword`\n💾 **RAM:** `{ram}`\n🖥 **CPU:** `{cores} Cores`\n📀 **OS:** `Ubuntu 22.04`",
+            title="🎉 VPS Created!",
+            description=f"🔗 **SSH Session:** ```{ssh_session_line}```\n"
+                        f"💾 **RAM:** `{ram}`\n🖥 **CPU:** `{cores} Cores`\n📀 **OS:** `Ubuntu 22.04`",
             color=0x1abc9c
         )
-        embed.set_footer(text="Enjoy your custom VPS! | Powered by NXH-i9")
-        await interaction.user.send(embed=embed)
+        embed.set_footer(text="Enjoy your VPS! | Powered by NXH-i9")
+        await interaction.response.send_message(embed=embed)  # ✅ Send message in Discord channel
 
         # Save VPS details in the database
         add_to_database(userid, container_name, ssh_session_line)
-
-        await interaction.followup.send(embed=discord.Embed(
-            description="✅ **Custom VPS created successfully!** Check your DMs for details.",
-            color=0x00ff00))
 
     else:
         # If SSH session fails, remove the container
         subprocess.run(["docker", "stop", container_name])
         subprocess.run(["docker", "rm", container_name])
 
-        await interaction.followup.send(embed=discord.Embed(
+        await interaction.response.send_message(embed=discord.Embed(
             description="❌ **Error occurred while generating SSH session.** Contact support!",
             color=0xff0000))
 @bot.tree.command(name="deploy-custom", description="Deploy a VPS with custom RAM and CPU settings")
